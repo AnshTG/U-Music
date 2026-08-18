@@ -1,0 +1,6 @@
+{
+  "name": "U Music",
+  "description": "Ultra-modern dual-purpose music streaming and local media player with equalizer, sleep timer, lyrics, smart discovery, downloads, and tag editor.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
