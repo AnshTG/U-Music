@@ -65,6 +65,7 @@ class MusicPlayerController(private val context: Context) {
     private var prepareJob: Job? = null
     private var progressJob: Job? = null
     private var sleepTimer: CountDownTimer? = null
+    private var _retryAttempted: Boolean = false
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -104,13 +105,35 @@ class MusicPlayerController(private val context: Context) {
                 setOnErrorListener { mp, what, extra ->
                     Log.e("MusicPlayerController", "MediaPlayer error: what=$what, extra=$extra")
                     isPrepared = false
-                    _uiState.value = _uiState.value.copy(isLoading = false, isPlaying = false)
                     try {
                         mp.reset()
                     } catch (e: Exception) {
                         // ignore
                     }
-                    onPlaybackStateChanged?.invoke(_uiState.value.currentSong, false)
+                    val current = _uiState.value.currentSong
+                    if (current != null && !_retryAttempted) {
+                        _retryAttempted = true
+                        Log.i("MusicPlayerController", "Attempting playback fallback for: ${current.title}")
+                        scope.launch {
+                            try {
+                                val fallbackSong = AudioStreamExtractor.getIndianTrendingHits().first()
+                                val fallbackHeaders = mapOf(
+                                    "User-Agent" to "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36",
+                                    "Accept" to "*/*"
+                                )
+                                mp.setDataSource(context, Uri.parse(fallbackSong.audioUrl), fallbackHeaders)
+                                mp.prepareAsync()
+                            } catch (e: Exception) {
+                                Log.e("MusicPlayerController", "Fallback attempt failed: ${e.message}")
+                                _uiState.value = _uiState.value.copy(isLoading = false, isPlaying = false)
+                                onPlaybackStateChanged?.invoke(current, false)
+                            }
+                        }
+                    } else {
+                        _retryAttempted = false
+                        _uiState.value = _uiState.value.copy(isLoading = false, isPlaying = false)
+                        onPlaybackStateChanged?.invoke(current, false)
+                    }
                     true
                 }
             }
@@ -137,6 +160,7 @@ class MusicPlayerController(private val context: Context) {
     }
 
     fun playSong(song: Song, newQueue: List<Song>? = null) {
+        _retryAttempted = false
         val queue = newQueue ?: if (_uiState.value.queue.isEmpty()) listOf(song) else _uiState.value.queue
         val index = queue.indexOfFirst { it.id == song.id }.let { if (it == -1) 0 else it }
 
