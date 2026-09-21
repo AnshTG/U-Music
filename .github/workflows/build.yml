@@ -8,12 +8,16 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout source
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up JDK 21
@@ -25,14 +29,18 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Decode Debug Keystore
+      - name: Accept Android SDK Licenses
         run: |
+          yes | sdkmanager --licenses || true
+
+      - name: Prepare Signing and Secrets
+        run: |
+          # 1. Restore debug keystore from base64 if available
           if [ -f debug.keystore.base64 ]; then
-            base64 -d debug.keystore.base64 > debug.keystore
+            base64 -d debug.keystore.base64 > debug.keystore || true
           fi
 
-      - name: Create .env if missing
-        run: |
+          # 2. Ensure .env exists so Secrets Gradle Plugin is satisfied
           if [ ! -f .env ] && [ -f .env.example ]; then
             cp .env.example .env
           elif [ ! -f .env ]; then
@@ -43,12 +51,20 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 9.3.1
+          cache-read-only: false
 
-      - name: Build Debug APK
-        run: gradle assembleDebug --stacktrace
+      - name: Build APK (assembleDebug)
+        run: |
+          gradle assembleDebug --no-configuration-cache --stacktrace
 
-      - name: Upload APK
+      - name: Locate and verify APK
+        run: |
+          echo "Listing all generated APKs:"
+          find app/build/outputs/apk -type f -name "*.apk" || true
+
+      - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug-apk
+          name: u-music-debug-apk
           path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
