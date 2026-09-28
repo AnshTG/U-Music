@@ -55,6 +55,7 @@ fun MiniPlayer(
     onSkipNextClick: () -> Unit,
     onLikeClick: () -> Unit,
     onPlayerClick: () -> Unit,
+    isWaveformEnabled: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val song = playbackState.currentSong ?: return
@@ -120,15 +121,22 @@ fun MiniPlayer(
 
                 // Title & Artist
                 Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = song.title,
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            fontWeight = FontWeight.SemiBold
-                        ),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = song.title,
+                            style = MaterialTheme.typography.bodyMedium.copy(
+                                fontWeight = FontWeight.SemiBold
+                            ),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.weight(1f, fill = false)
+                        )
+                        if (playbackState.isPlaying && isWaveformEnabled) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            AnimatedWaveform(modifier = Modifier.height(14.dp))
+                        }
+                    }
                     Text(
                         text = song.artist,
                         style = MaterialTheme.typography.bodySmall,

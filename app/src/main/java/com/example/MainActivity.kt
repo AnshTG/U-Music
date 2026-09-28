@@ -1,6 +1,7 @@
 package com.example
 
 import android.Manifest
+import android.app.Activity
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -9,7 +10,9 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -19,6 +22,7 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -42,6 +46,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -56,16 +61,19 @@ import androidx.core.content.ContextCompat
 import com.example.data.model.Song
 import com.example.service.MusicPlaybackService
 import com.example.ui.components.AddToPlaylistDialog
+import com.example.ui.components.AddTracksToPlaylistDialog
 import com.example.ui.components.AudioTrimmerDialog
 import com.example.ui.components.CreatePlaylistDialog
 import com.example.ui.components.EditProfileDialog
 import com.example.ui.components.EqualizerSheet
+import com.example.ui.components.MoveSongToPlaylistDialog
 import com.example.ui.components.FullScreenPlayer
 import com.example.ui.components.MiniPlayer
 import com.example.ui.components.SleepTimerDialog
 import com.example.ui.components.SongActionMenuSheet
 import com.example.ui.components.TagEditorDialog
 import com.example.ui.components.VolumeBoosterDialog
+import com.example.ui.screens.AdminPanelScreen
 import com.example.ui.screens.DownloadedSongsScreen
 import com.example.ui.screens.ExploreScreen
 import com.example.ui.screens.HomeScreen
@@ -182,6 +190,7 @@ fun MainAppContent(viewModel: MusicViewModel) {
     val downloadedSongs by viewModel.downloadedSongs.collectAsState()
     val localSongs by viewModel.localDeviceSongs.collectAsState()
     val playlists by viewModel.allPlaylists.collectAsState()
+    val allOnlineSongs by viewModel.allOnlineSongs.collectAsState()
     val searchState by viewModel.searchState.collectAsState()
     val isPlayerExpanded by viewModel.isPlayerExpanded.collectAsState()
     val selectedPlaylistId by viewModel.selectedPlaylistId.collectAsState()
@@ -189,7 +198,10 @@ fun MainAppContent(viewModel: MusicViewModel) {
 
     var showSearchOverlay by remember { mutableStateOf(false) }
     var showSettingsScreen by remember { mutableStateOf(false) }
+    var showAdminPanelScreen by remember { mutableStateOf(false) }
+    var showDownloadedSongsScreen by remember { mutableStateOf(false) }
     var showEditProfileDialog by remember { mutableStateOf(false) }
+    var showAddTracksToPlaylist by remember { mutableStateOf(false) }
 
     // Dialog and Sheet States
     val showEqualizerSheet by viewModel.showEqualizerSheet.collectAsState()
@@ -213,10 +225,63 @@ fun MainAppContent(viewModel: MusicViewModel) {
     val ytBackgroundPlayback by viewModel.ytBackgroundPlayback.collectAsState()
     val ytPreferStream by viewModel.ytPreferStream.collectAsState()
     val ytAutoMatch by viewModel.ytAutoMatch.collectAsState()
+    val equalizerFeatureEnabled by viewModel.equalizerFeatureEnabled.collectAsState()
+    val volumeBoosterFeatureEnabled by viewModel.volumeBoosterFeatureEnabled.collectAsState()
+    val tagEditorFeatureEnabled by viewModel.tagEditorFeatureEnabled.collectAsState()
+    val audioTrimmerFeatureEnabled by viewModel.audioTrimmerFeatureEnabled.collectAsState()
+    val localScannerFeatureEnabled by viewModel.localScannerFeatureEnabled.collectAsState()
+    val filterShortAudio by viewModel.filterShortAudio.collectAsState()
+    val waveformVisualizerEnabled by viewModel.waveformVisualizerEnabled.collectAsState()
+    val isAdaptiveQualityEnabled by viewModel.isAdaptiveQualityEnabled.collectAsState()
+    val effectiveStreamingQuality by viewModel.effectiveStreamingQuality.collectAsState()
+    val detectedBandwidthKbps by viewModel.detectedBandwidthKbps.collectAsState()
+    val networkTypeName by viewModel.networkTypeName.collectAsState()
+    val simulatedBandwidthKbps by viewModel.simulatedBandwidthKbps.collectAsState()
+    val searchGenreRadioEnabled by viewModel.searchGenreRadioEnabled.collectAsState()
+    val excludeSearchRemixes by viewModel.excludeSearchRemixes.collectAsState()
+    val currentPlaylistSongs by viewModel.currentPlaylistSongs.collectAsState()
+    val songToMove by viewModel.songToMoveBetweenPlaylists.collectAsState()
+    val searchTimeoutSeconds by viewModel.searchTimeoutSeconds.collectAsState()
+    val autoDownloadOfflinePlaylists by viewModel.autoDownloadOfflinePlaylists.collectAsState()
+
+    var lastBackPressTime by remember { mutableLongStateOf(0L) }
+
+    // Step-by-step Hierarchical Back Navigation Handler
+    BackHandler(enabled = true) {
+        if (showAdminPanelScreen) {
+            showAdminPanelScreen = false
+            return@BackHandler
+        }
+        if (showSettingsScreen) {
+            showSettingsScreen = false
+            return@BackHandler
+        }
+        if (showDownloadedSongsScreen) {
+            showDownloadedSongsScreen = false
+            return@BackHandler
+        }
+        if (showSearchOverlay) {
+            showSearchOverlay = false
+            return@BackHandler
+        }
+        if (showEditProfileDialog) {
+            showEditProfileDialog = false
+            return@BackHandler
+        }
+        val handled = viewModel.navigateBackStep()
+        if (!handled) {
+            val currentTime = System.currentTimeMillis()
+            if (currentTime - lastBackPressTime < 2000L) {
+                (context as? Activity)?.finish()
+            } else {
+                lastBackPressTime = currentTime
+                Toast.makeText(context, "Press back again to exit", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     val userMessage by viewModel.userMessage.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
-    var showDownloadedSongsScreen by remember { mutableStateOf(false) }
 
     LaunchedEffect(userMessage) {
         userMessage?.let { message ->
@@ -225,10 +290,12 @@ fun MainAppContent(viewModel: MusicViewModel) {
         }
     }
 
-    Scaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState) },
-        bottomBar = {
-            if (!isPlayerExpanded && !showSettingsScreen && !showDownloadedSongsScreen && selectedPlaylistId == null) {
+    Box(modifier = Modifier.fillMaxSize()) {
+        Scaffold(
+            contentWindowInsets = WindowInsets(0, 0, 0, 0),
+            snackbarHost = { SnackbarHost(snackbarHostState) },
+            bottomBar = {
+                if (!isPlayerExpanded && !showSettingsScreen && !showDownloadedSongsScreen && !showAdminPanelScreen && selectedPlaylistId == null) {
                 Column {
                     // Mini Player
                     if (playbackState.currentSong != null) {
@@ -237,7 +304,8 @@ fun MainAppContent(viewModel: MusicViewModel) {
                             onPlayPauseClick = { viewModel.togglePlayPause() },
                             onSkipNextClick = { viewModel.skipNext() },
                             onLikeClick = { playbackState.currentSong?.let { viewModel.toggleLike(it) } },
-                            onPlayerClick = { viewModel.setPlayerExpanded(true) }
+                            onPlayerClick = { viewModel.setPlayerExpanded(true) },
+                            isWaveformEnabled = waveformVisualizerEnabled
                         )
                     }
 
@@ -319,6 +387,10 @@ fun MainAppContent(viewModel: MusicViewModel) {
                         currentTheme = currentTheme,
                         currentAccent = themeAccent,
                         isAdBlockEnabled = isAdBlockEnabled,
+                        isAdaptiveQualityEnabled = isAdaptiveQualityEnabled,
+                        effectiveStreamingQuality = effectiveStreamingQuality,
+                        detectedBandwidthKbps = detectedBandwidthKbps,
+                        networkTypeName = networkTypeName,
                         streamingQuality = streamingQuality,
                         downloadQuality = downloadQuality,
                         crossfadeSec = crossfadeSec,
@@ -329,9 +401,14 @@ fun MainAppContent(viewModel: MusicViewModel) {
                         ytPreferStream = ytPreferStream,
                         ytAutoMatch = ytAutoMatch,
                         onBack = { showSettingsScreen = false },
+                        onOpenAdminPanel = {
+                            showSettingsScreen = false
+                            showAdminPanelScreen = true
+                        },
                         onThemeChange = { viewModel.setTheme(it) },
                         onAccentChange = { viewModel.setThemeAccent(it) },
                         onAdBlockChange = { viewModel.setAdBlockEnabled(it) },
+                        onAdaptiveQualityEnabledChange = { viewModel.setAdaptiveQualityEnabled(it) },
                         onStreamingQualityChange = { viewModel.setStreamingQuality(it) },
                         onDownloadQualityChange = { viewModel.setDownloadQuality(it) },
                         onCrossfadeChange = { viewModel.setCrossfadeSec(it) },
@@ -341,6 +418,71 @@ fun MainAppContent(viewModel: MusicViewModel) {
                         onYtBackgroundPlaybackChange = { viewModel.setYtBackgroundPlayback(it) },
                         onYtPreferStreamChange = { viewModel.setYtPreferStream(it) },
                         onYtAutoMatchChange = { viewModel.setYtAutoMatch(it) }
+                    )
+                }
+                showAdminPanelScreen -> {
+                    AdminPanelScreen(
+                        equalizerEnabled = equalizerFeatureEnabled,
+                        volumeBoosterEnabled = volumeBoosterFeatureEnabled,
+                        tagEditorEnabled = tagEditorFeatureEnabled,
+                        audioTrimmerEnabled = audioTrimmerFeatureEnabled,
+                        localScannerEnabled = localScannerFeatureEnabled,
+                        filterShortAudio = filterShortAudio,
+                        waveformVisualizerEnabled = waveformVisualizerEnabled,
+                        isAdBlockEnabled = isAdBlockEnabled,
+                        ytBackgroundPlayback = ytBackgroundPlayback,
+                        ytPreferStream = ytPreferStream,
+                        ytAutoMatch = ytAutoMatch,
+                        dataSaver = dataSaver,
+                        normalizeVolume = normalizeVolume,
+                        gaplessPlayback = gaplessPlayback,
+                        crossfadeSec = crossfadeSec,
+                        streamingQuality = streamingQuality,
+                        downloadQuality = downloadQuality,
+                        currentTheme = currentTheme,
+                        currentAccent = themeAccent,
+                        isAdaptiveQualityEnabled = isAdaptiveQualityEnabled,
+                        effectiveStreamingQuality = effectiveStreamingQuality,
+                        detectedBandwidthKbps = detectedBandwidthKbps,
+                        networkTypeName = networkTypeName,
+                        simulatedBandwidthKbps = simulatedBandwidthKbps,
+                        searchGenreRadioEnabled = searchGenreRadioEnabled,
+                        excludeSearchRemixes = excludeSearchRemixes,
+                        totalMinutesListened = userProfile.totalMinutesListened,
+                        songsPlayedCount = userProfile.songsPlayedCount,
+                        onEqualizerEnabledChange = { viewModel.setEqualizerFeatureEnabled(it) },
+                        onVolumeBoosterEnabledChange = { viewModel.setVolumeBoosterFeatureEnabled(it) },
+                        onTagEditorEnabledChange = { viewModel.setTagEditorFeatureEnabled(it) },
+                        onAudioTrimmerEnabledChange = { viewModel.setAudioTrimmerFeatureEnabled(it) },
+                        onLocalScannerEnabledChange = { viewModel.setLocalScannerFeatureEnabled(it) },
+                        onFilterShortAudioChange = { viewModel.setFilterShortAudio(it) },
+                        onWaveformVisualizerChange = { viewModel.setWaveformVisualizerEnabled(it) },
+                        onAdBlockChange = { viewModel.setAdBlockEnabled(it) },
+                        onYtBackgroundPlaybackChange = { viewModel.setYtBackgroundPlayback(it) },
+                        onYtPreferStreamChange = { viewModel.setYtPreferStream(it) },
+                        onYtAutoMatchChange = { viewModel.setYtAutoMatch(it) },
+                        onDataSaverChange = { viewModel.setDataSaver(it) },
+                        onNormalizeVolumeChange = { viewModel.setNormalizeVolume(it) },
+                        onGaplessChange = { viewModel.setGaplessPlayback(it) },
+                        onCrossfadeChange = { viewModel.setCrossfadeSec(it) },
+                        onStreamingQualityChange = { viewModel.setStreamingQuality(it) },
+                        onDownloadQualityChange = { viewModel.setDownloadQuality(it) },
+                        onAdaptiveQualityEnabledChange = { viewModel.setAdaptiveQualityEnabled(it) },
+                        onSimulateSpeed = { viewModel.simulateNetworkBandwidth(it) },
+                        onSearchGenreRadioEnabledChange = { viewModel.setSearchGenreRadioEnabled(it) },
+                        onExcludeSearchRemixesChange = { viewModel.setExcludeSearchRemixes(it) },
+                        searchTimeoutSeconds = searchTimeoutSeconds,
+                        autoDownloadOfflinePlaylists = autoDownloadOfflinePlaylists,
+                        downloadedSongsCount = downloadedSongs.size,
+                        onSearchTimeoutSecondsChange = { viewModel.setSearchTimeoutSeconds(it) },
+                        onAutoDownloadOfflinePlaylistsChange = { viewModel.setAutoDownloadOfflinePlaylists(it) },
+                        onClearAllDownloads = { viewModel.clearAllDownloads() },
+                        onClearAllPlaylists = { viewModel.clearAllPlaylists() },
+                        onGetCacheSize = { viewModel.getOfflineCacheSizeBytes() },
+                        onClearCache = { onDone -> viewModel.clearOfflineCache(onDone) },
+                        onResetStats = { viewModel.resetListeningHistory() },
+                        onReseedCatalog = { viewModel.reseedCatalog() },
+                        onBack = { showAdminPanelScreen = false }
                     )
                 }
                 showDownloadedSongsScreen -> {
@@ -359,16 +501,17 @@ fun MainAppContent(viewModel: MusicViewModel) {
                         },
                         onSongClick = { song, queue -> viewModel.playSong(song, queue) },
                         onSongLike = { viewModel.toggleLike(it) },
-                        onSongMore = { viewModel.showSongMenu(it) }
+                        onSongMore = { viewModel.showSongMenu(it) },
+                        onDeleteSong = { viewModel.deleteDownload(it) },
+                        onClearAll = { viewModel.clearAllDownloads() }
                     )
                 }
                 selectedPlaylistId != null -> {
                     val activePlaylist = playlists.find { it.id == selectedPlaylistId }
                     if (activePlaylist != null) {
-                        val playlistSongs = viewModel.repository.getOnlineCatalog()
                         PlaylistDetailScreen(
                             playlist = activePlaylist,
-                            playlistSongs = playlistSongs,
+                            playlistSongs = currentPlaylistSongs,
                             playbackState = playbackState,
                             onBack = { viewModel.closePlaylist() },
                             onPlayAll = { songs ->
@@ -383,7 +526,10 @@ fun MainAppContent(viewModel: MusicViewModel) {
                             onSongClick = { song, queue -> viewModel.playSong(song, queue) },
                             onSongLike = { viewModel.toggleLike(it) },
                             onSongMore = { viewModel.showSongMenu(it) },
-                            onDeletePlaylist = { viewModel.deletePlaylist(it) }
+                            onDeletePlaylist = { viewModel.deletePlaylist(it) },
+                            onAddTracksClick = { showAddTracksToPlaylist = true },
+                            onRemoveSong = { song -> viewModel.removeSongFromPlaylist(activePlaylist.id, song.id) },
+                            onMoveSong = { song -> viewModel.showMoveSongDialog(song, activePlaylist.id) }
                         )
                     }
                 }
@@ -394,7 +540,7 @@ fun MainAppContent(viewModel: MusicViewModel) {
                         onQueryChanged = { viewModel.onSearchQueryChanged(it) },
                         onFilterSelected = { viewModel.onSearchFilterSelected(it) },
                         onClearQuery = { viewModel.clearSearch() },
-                        onSongClick = { song, queue -> viewModel.playSong(song, queue) },
+                        onSongClick = { song, _ -> viewModel.playSongFromSearch(song) },
                         onSongLike = { viewModel.toggleLike(it) },
                         onSongMore = { viewModel.showSongMenu(it) }
                     )
@@ -419,7 +565,7 @@ fun MainAppContent(viewModel: MusicViewModel) {
                             onQueryChanged = { viewModel.onSearchQueryChanged(it) },
                             onFilterSelected = { viewModel.onSearchFilterSelected(it) },
                             onClearQuery = { viewModel.clearSearch() },
-                            onSongClick = { song, queue -> viewModel.playSong(song, queue) },
+                            onSongClick = { song, _ -> viewModel.playSongFromSearch(song) },
                             onSongLike = { viewModel.toggleLike(it) },
                             onSongMore = { viewModel.showSongMenu(it) }
                         )
@@ -449,40 +595,42 @@ fun MainAppContent(viewModel: MusicViewModel) {
                             onSongLike = { viewModel.toggleLike(it) },
                             onSongMore = { viewModel.showSongMenu(it) },
                             onOpenSettings = { showSettingsScreen = true },
-                            onEditProfile = { showEditProfileDialog = true }
+                            onEditProfile = { showEditProfileDialog = true },
+                            onOpenAdminPanel = { showAdminPanelScreen = true }
                         )
                     }
                 }
             }
-
-            // Animated Full Screen Player Overlay
-            AnimatedVisibility(
-                visible = isPlayerExpanded,
-                enter = slideInVertically(initialOffsetY = { it }),
-                exit = slideOutVertically(targetOffsetY = { it })
-            ) {
-                FullScreenPlayer(
-                    playbackState = playbackState,
-                    onCollapse = { viewModel.setPlayerExpanded(false) },
-                    onPlayPause = { viewModel.togglePlayPause() },
-                    onSeekTo = { viewModel.seekTo(it) },
-                    onSkipNext = { viewModel.skipNext() },
-                    onSkipPrevious = { viewModel.skipPrevious() },
-                    onToggleShuffle = { viewModel.toggleShuffle() },
-                    onCycleRepeat = { viewModel.cycleRepeatMode() },
-                    onToggleLike = { viewModel.toggleLike(it) },
-                    onDownload = { viewModel.downloadSong(it) },
-                    onOpenEqualizer = { viewModel.showEqualizer(true) },
-                    onOpenSleepTimer = { viewModel.showSleepTimer(true) },
-                    onOpenVolumeBooster = { viewModel.showVolumeBooster(true) },
-                    onRemoveFromQueue = { viewModel.removeFromQueue(it) },
-                    onSelectQueueSong = { viewModel.playSong(it) },
-                    onOpenInYoutubeMusic = { },
-                    onToggleYoutubeStream = { viewModel.toggleCloudStreamMode() }
-                )
-            }
         }
     }
+
+    // Animated Full Screen Player Overlay positioned cleanly on top of Scaffold
+    AnimatedVisibility(
+        visible = isPlayerExpanded,
+        enter = slideInVertically(initialOffsetY = { it }),
+        exit = slideOutVertically(targetOffsetY = { it })
+    ) {
+        FullScreenPlayer(
+            playbackState = playbackState,
+            onCollapse = { viewModel.setPlayerExpanded(false) },
+            onPlayPause = { viewModel.togglePlayPause() },
+            onSeekTo = { viewModel.seekTo(it) },
+            onSkipNext = { viewModel.skipNext() },
+            onSkipPrevious = { viewModel.skipPrevious() },
+            onToggleShuffle = { viewModel.toggleShuffle() },
+            onCycleRepeat = { viewModel.cycleRepeatMode() },
+            onToggleLike = { viewModel.toggleLike(it) },
+            onDownload = { viewModel.downloadSong(it) },
+            onOpenEqualizer = { viewModel.showEqualizer(true) },
+            onOpenSleepTimer = { viewModel.showSleepTimer(true) },
+            onOpenVolumeBooster = { viewModel.showVolumeBooster(true) },
+            onRemoveFromQueue = { viewModel.removeFromQueue(it) },
+            onSelectQueueSong = { viewModel.playSong(it) },
+            onOpenInYoutubeMusic = { },
+            onToggleYoutubeStream = { viewModel.toggleCloudStreamMode() }
+        )
+    }
+}
 
     // Modal Sheets & Dialogs
     if (showEqualizerSheet) {
@@ -524,10 +672,15 @@ fun MainAppContent(viewModel: MusicViewModel) {
             onAddToPlaylist = { viewModel.showAddToPlaylist(song) },
             onToggleLike = { viewModel.toggleLike(song) },
             onDownload = { viewModel.downloadSong(song) },
+            onDeleteDownload = if (song.isDownloaded) { { viewModel.deleteDownload(song) } } else null,
             onOpenTagEditor = { viewModel.showTagEditor(song) },
             onOpenTrimmer = { viewModel.showTrimmer(song) },
             onOpenInYoutubeMusic = { },
-            onMatchWithYoutube = { viewModel.matchSongWithCloud(song) }
+            onMatchWithYoutube = { viewModel.matchSongWithCloud(song) },
+            onRemoveFromCurrentPlaylist = if (selectedPlaylistId != null) { { viewModel.removeSongFromPlaylist(selectedPlaylistId!!, song.id) } } else null,
+            onMoveToAnotherPlaylist = if (selectedPlaylistId != null) { { viewModel.showMoveSongDialog(song, selectedPlaylistId!!) } } else null,
+            isTagEditorEnabled = tagEditorFeatureEnabled,
+            isAudioTrimmerEnabled = audioTrimmerFeatureEnabled
         )
     }
 
@@ -567,11 +720,38 @@ fun MainAppContent(viewModel: MusicViewModel) {
 
     if (showCreatePlaylistDialog) {
         CreatePlaylistDialog(
-            onCreate = { title, desc ->
-                viewModel.createNewPlaylist(title, desc)
+            onCreate = { title, desc, isOffline ->
+                viewModel.createNewPlaylist(title, desc, isOffline)
             },
             onDismiss = { viewModel.showCreatePlaylist(false) }
         )
+    }
+
+    songToMove?.let { pair ->
+        MoveSongToPlaylistDialog(
+            song = pair.first,
+            fromPlaylistId = pair.second,
+            playlists = playlists,
+            onSelectTargetPlaylist = { target ->
+                viewModel.moveSongBetweenPlaylists(pair.second, target.id, pair.first.id)
+            },
+            onDismiss = { viewModel.showMoveSongDialog(null, null) }
+        )
+    }
+
+    if (showAddTracksToPlaylist && selectedPlaylistId != null) {
+        val activePlaylist = playlists.find { it.id == selectedPlaylistId }
+        if (activePlaylist != null) {
+            AddTracksToPlaylistDialog(
+                playlist = activePlaylist,
+                allSongs = viewModel.repository.getOnlineCatalog(),
+                existingSongIds = currentPlaylistSongs.map { it.id }.toSet(),
+                onAddSong = { song ->
+                    viewModel.addSongToPlaylist(activePlaylist.id, song.id)
+                },
+                onDismiss = { showAddTracksToPlaylist = false }
+            )
+        }
     }
 
     if (showEditProfileDialog) {

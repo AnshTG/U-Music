@@ -78,7 +78,7 @@ fun ExploreScreen(
         modifier = modifier
             .fillMaxSize()
             .testTag("explore_screen"),
-        contentPadding = PaddingValues(bottom = 120.dp)
+        contentPadding = PaddingValues(bottom = 24.dp)
     ) {
         // Top Banner
         item {

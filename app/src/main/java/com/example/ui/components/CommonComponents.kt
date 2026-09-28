@@ -292,6 +292,25 @@ fun PlaylistCard(
                         )
                     }
                 }
+
+                // Online vs Offline Badge
+                Surface(
+                    shape = RoundedCornerShape(4.dp),
+                    color = if (playlist.isOffline) NeonCyan.copy(alpha = 0.9f) else ElectricViolet.copy(alpha = 0.9f),
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                ) {
+                    Text(
+                        text = if (playlist.isOffline) "OFFLINE" else "ONLINE",
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 8.sp,
+                            fontWeight = FontWeight.Bold
+                        ),
+                        color = if (playlist.isOffline) Color.Black else Color.White,
+                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                    )
+                }
             }
 
             Column(modifier = Modifier.padding(10.dp)) {

@@ -15,6 +15,8 @@ import com.example.data.model.UserProfile
 import com.example.data.repository.MusicRepository
 import com.example.player.MusicPlayerController
 import com.example.player.PlaybackUiState
+import com.example.util.NetworkSpeedMonitor
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -22,8 +24,11 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 enum class ScreenTab {
     HOME, SEARCH, EXPLORE, YOU
@@ -43,10 +48,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val repository = MusicRepository(application, database)
     val preferencesManager = PreferencesManager(application)
     val playerController = MusicPlayerController(application)
+    val networkSpeedMonitor = NetworkSpeedMonitor(application)
 
-    // Navigation & Tabs
+    // Navigation & Tabs with history stack
     private val _currentTab = MutableStateFlow(ScreenTab.HOME)
     val currentTab: StateFlow<ScreenTab> = _currentTab.asStateFlow()
+    private val tabBackStack = mutableListOf<ScreenTab>()
 
     private val _selectedPlaylistId = MutableStateFlow<String?>(null)
     val selectedPlaylistId: StateFlow<String?> = _selectedPlaylistId.asStateFlow()
@@ -91,12 +98,17 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     private val _showCreatePlaylistDialog = MutableStateFlow(false)
     val showCreatePlaylistDialog: StateFlow<Boolean> = _showCreatePlaylistDialog.asStateFlow()
 
+    private val _songToMoveBetweenPlaylists = MutableStateFlow<Pair<Song, String>?>(null)
+    val songToMoveBetweenPlaylists: StateFlow<Pair<Song, String>?> = _songToMoveBetweenPlaylists.asStateFlow()
+
     // Streams & Data
     val playbackState: StateFlow<PlaybackUiState> = playerController.uiState
 
     val likedSongs: StateFlow<List<Song>> = repository.likedSongs.stateIn(
         viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList()
     )
+
+    val allOnlineSongs: StateFlow<List<Song>> = repository.onlineCatalogFlow
 
     val downloadedSongs: StateFlow<List<Song>> = repository.downloadedSongs.stateIn(
         viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList()
@@ -110,11 +122,36 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList()
     )
 
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val currentPlaylistSongs: StateFlow<List<Song>> = _selectedPlaylistId
+        .flatMapLatest { id ->
+            if (id != null) repository.getSongsForPlaylist(id) else flowOf(emptyList())
+        }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val userProfile: StateFlow<UserProfile> = preferencesManager.userProfile
     val theme: StateFlow<String> = preferencesManager.theme
     val themeAccent: StateFlow<String> = preferencesManager.themeAccent
     val isAdBlockEnabled: StateFlow<Boolean> = preferencesManager.isAdBlockEnabled
+    val isAdaptiveQualityEnabled: StateFlow<Boolean> = preferencesManager.isAdaptiveQualityEnabled
     val streamingQuality: StateFlow<String> = preferencesManager.streamingQuality
+    val detectedBandwidthKbps: StateFlow<Int> = networkSpeedMonitor.detectedBandwidthKbps
+    val networkTypeName: StateFlow<String> = networkSpeedMonitor.networkTypeName
+    val simulatedBandwidthKbps: StateFlow<Int?> = networkSpeedMonitor.simulatedBandwidthKbps
+
+    val effectiveStreamingQuality: StateFlow<String> = combine(
+        preferencesManager.isAdaptiveQualityEnabled,
+        preferencesManager.streamingQuality,
+        networkSpeedMonitor.adaptiveBitrate
+    ) { adaptiveEnabled, manualQuality, autoQuality ->
+        if (adaptiveEnabled) autoQuality else manualQuality
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, NetworkSpeedMonitor.BITRATE_256K)
+
+    val searchGenreRadioEnabled: StateFlow<Boolean> = preferencesManager.searchGenreRadioEnabled
+    val excludeSearchRemixes: StateFlow<Boolean> = preferencesManager.excludeSearchRemixes
+    val autoDownloadOfflinePlaylists: StateFlow<Boolean> = preferencesManager.autoDownloadOfflinePlaylists
+    val searchTimeoutSeconds: StateFlow<Int> = preferencesManager.searchTimeoutSeconds
+
     val downloadQuality: StateFlow<String> = preferencesManager.downloadQuality
     val crossfadeSec: StateFlow<Int> = preferencesManager.crossfadeSec
     val gaplessPlayback: StateFlow<Boolean> = preferencesManager.gaplessPlayback
@@ -123,6 +160,13 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val ytBackgroundPlayback: StateFlow<Boolean> = preferencesManager.ytBackgroundPlayback
     val ytPreferStream: StateFlow<Boolean> = preferencesManager.ytPreferStream
     val ytAutoMatch: StateFlow<Boolean> = preferencesManager.ytAutoMatch
+    val equalizerFeatureEnabled: StateFlow<Boolean> = preferencesManager.equalizerFeatureEnabled
+    val volumeBoosterFeatureEnabled: StateFlow<Boolean> = preferencesManager.volumeBoosterFeatureEnabled
+    val tagEditorFeatureEnabled: StateFlow<Boolean> = preferencesManager.tagEditorFeatureEnabled
+    val audioTrimmerFeatureEnabled: StateFlow<Boolean> = preferencesManager.audioTrimmerFeatureEnabled
+    val localScannerFeatureEnabled: StateFlow<Boolean> = preferencesManager.localScannerFeatureEnabled
+    val filterShortAudio: StateFlow<Boolean> = preferencesManager.filterShortAudio
+    val waveformVisualizerEnabled: StateFlow<Boolean> = preferencesManager.waveformVisualizerEnabled
 
     // Search state
     private val _searchState = MutableStateFlow(SearchUiState())
@@ -133,6 +177,12 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     val localMediaSortBy: StateFlow<String> = _localMediaSortBy.asStateFlow()
 
     init {
+        viewModelScope.launch {
+            effectiveStreamingQuality.collect { quality ->
+                playerController.activeStreamingQuality = quality
+            }
+        }
+
         viewModelScope.launch {
             val profile = preferencesManager.userProfile.value
             repository.initializeCatalog(profile.country, profile.age)
@@ -146,7 +196,77 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectTab(tab: ScreenTab) {
-        _currentTab.value = tab
+        if (_currentTab.value != tab) {
+            tabBackStack.add(_currentTab.value)
+            _currentTab.value = tab
+        }
+    }
+
+    /**
+     * Hierarchical step-by-step back navigation.
+     * Navigates one step back:
+     * 1. Collapse full-screen player if expanded.
+     * 2. Close active modal sheets and dialogs.
+     * 3. Close playlist detail view.
+     * 4. Clear search query if active.
+     * 5. Pop tab history, stepping back toward Home tab.
+     * Returns true if handled, or false if already at root Home tab.
+     */
+    fun navigateBackStep(): Boolean {
+        if (_isPlayerExpanded.value) {
+            _isPlayerExpanded.value = false
+            return true
+        }
+        if (_showEqualizerSheet.value) {
+            _showEqualizerSheet.value = false
+            return true
+        }
+        if (_showSleepTimerDialog.value) {
+            _showSleepTimerDialog.value = false
+            return true
+        }
+        if (_showVolumeBoosterDialog.value) {
+            _showVolumeBoosterDialog.value = false
+            return true
+        }
+        if (_songForActionMenu.value != null) {
+            _songForActionMenu.value = null
+            return true
+        }
+        if (_songForTagEditor.value != null) {
+            _songForTagEditor.value = null
+            return true
+        }
+        if (_songForTrimmer.value != null) {
+            _songForTrimmer.value = null
+            return true
+        }
+        if (_showAddToPlaylistDialog.value != null) {
+            _showAddToPlaylistDialog.value = null
+            return true
+        }
+        if (_showCreatePlaylistDialog.value) {
+            _showCreatePlaylistDialog.value = false
+            return true
+        }
+        if (_selectedPlaylistId.value != null) {
+            _selectedPlaylistId.value = null
+            return true
+        }
+        if (_searchState.value.query.isNotEmpty()) {
+            clearSearch()
+            return true
+        }
+        if (tabBackStack.isNotEmpty()) {
+            val prevTab = tabBackStack.removeAt(tabBackStack.lastIndex)
+            _currentTab.value = prevTab
+            return true
+        }
+        if (_currentTab.value != ScreenTab.HOME) {
+            _currentTab.value = ScreenTab.HOME
+            return true
+        }
+        return false
     }
 
     fun openPlaylist(playlistId: String) {
@@ -165,6 +285,62 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun playSong(song: Song, queue: List<Song>? = null) {
         playerController.playSong(song, queue)
         preferencesManager.recordSongPlay(song.genre, song.artist)
+    }
+
+    /**
+     * Plays a song initiated from Search.
+     * Rather than enqueuing repetitive remixes or alterations of the same searched track,
+     * builds a diverse genre radio mix starting from the selected song's genre.
+     */
+    fun playSongFromSearch(selectedSong: Song) {
+        val allSongs = repository.getOnlineCatalog()
+        val targetGenre = selectedSong.genre.ifBlank { "Pop" }
+        val isRadioEnabled = preferencesManager.searchGenreRadioEnabled.value
+        val excludeRemixes = preferencesManager.excludeSearchRemixes.value
+
+        val baseTitle = cleanBaseTitle(selectedSong.title)
+
+        val queue = if (isRadioEnabled) {
+            // Find songs from the catalog matching this genre, excluding remixes/variations of the same title
+            val matchingGenreSongs = allSongs.filter { other ->
+                other.id != selectedSong.id &&
+                (other.genre.contains(targetGenre, ignoreCase = true) || targetGenre.contains(other.genre, ignoreCase = true)) &&
+                (!excludeRemixes || !isSameSongVariation(baseTitle, other.title))
+            }.shuffled()
+
+            val diverseList = mutableListOf<Song>()
+            diverseList.add(selectedSong)
+            diverseList.addAll(matchingGenreSongs)
+
+            // If genre songs are sparse, top up with other diverse hits excluding variations
+            if (diverseList.size < 10) {
+                val supplemental = allSongs.filter { other ->
+                    diverseList.none { it.id == other.id } &&
+                    (!excludeRemixes || !isSameSongVariation(baseTitle, other.title))
+                }.shuffled().take(15 - diverseList.size)
+                diverseList.addAll(supplemental)
+            }
+            diverseList
+        } else {
+            listOf(selectedSong)
+        }
+
+        playSong(selectedSong, queue)
+        showMessage("Playing ${selectedSong.title} • Starting ${targetGenre} Radio Mix")
+    }
+
+    private fun cleanBaseTitle(title: String): String {
+        return title
+            .replace(Regex("(?i)\\s*[\\[\\(].*?[\\]\\)]"), "")
+            .replace(Regex("(?i)\\s*-\\s*(remix|lo-?fi|acoustic|version|mix|edit).*"), "")
+            .trim()
+            .lowercase()
+    }
+
+    private fun isSameSongVariation(baseTitle: String, otherTitle: String): Boolean {
+        if (baseTitle.isBlank()) return false
+        val cleanOther = cleanBaseTitle(otherTitle)
+        return cleanOther == baseTitle || cleanOther.contains(baseTitle) || baseTitle.contains(cleanOther)
     }
 
     fun togglePlayPause() {
@@ -200,13 +376,21 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun downloadSong(song: Song) {
         viewModelScope.launch {
             repository.downloadSong(song, downloadQuality.value)
-            showMessage("Added \"${song.title}\" to Offline Cache")
+            showMessage("Added \"${song.title}\" to Downloaded Songs")
         }
     }
 
     fun deleteDownload(song: Song) {
         viewModelScope.launch {
             repository.deleteDownload(song)
+            showMessage("Removed \"${song.title}\" from Downloaded Songs")
+        }
+    }
+
+    fun clearAllDownloads() {
+        viewModelScope.launch {
+            repository.clearAllDownloads()
+            showMessage("Cleared all Downloaded Songs")
         }
     }
 
@@ -219,29 +403,43 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
         
         _searchState.value = _searchState.value.copy(
             query = query,
-            searchResults = if (initialMatches.isNotEmpty()) initialMatches else repository.getOnlineCatalog(),
+            searchResults = if (initialMatches.isNotEmpty()) initialMatches else if (query.isEmpty()) repository.getOnlineCatalog() else emptyList(),
             isSearching = query.isNotEmpty(),
-            isLoading = query.length >= 2
+            isLoading = query.trim().length >= 2
         )
 
         searchJob?.cancel()
-        if (query.length >= 2) {
+        if (query.trim().length >= 2) {
             searchJob = viewModelScope.launch {
                 delay(200)
                 try {
-                    val onlineResults = repository.searchOnlineDirect(query)
+                    val timeoutMs = (searchTimeoutSeconds.value.coerceAtLeast(2) * 1000L)
+                    val onlineResults = withTimeoutOrNull(timeoutMs) {
+                        repository.searchOnlineDirect(query.trim())
+                    }
+                    val finalResults = if (!onlineResults.isNullOrEmpty()) {
+                        onlineResults
+                    } else {
+                        repository.searchSongs(query.trim(), _searchState.value.activeFilter)
+                    }
                     _searchState.value = _searchState.value.copy(
-                        searchResults = onlineResults,
+                        searchResults = finalResults,
                         isLoading = false
                     )
                 } catch (e: Exception) {
                     _searchState.value = _searchState.value.copy(
+                        searchResults = repository.searchSongs(query.trim(), _searchState.value.activeFilter),
                         isLoading = false
                     )
+                } finally {
+                    _searchState.value = _searchState.value.copy(isLoading = false)
                 }
             }
         } else {
-            _searchState.value = _searchState.value.copy(isLoading = false)
+            _searchState.value = _searchState.value.copy(
+                isLoading = false,
+                searchResults = if (query.isEmpty()) repository.getOnlineCatalog() else repository.searchSongs(query, currentFilter)
+            )
         }
     }
 
@@ -358,21 +556,75 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun showCreatePlaylist(show: Boolean) { _showCreatePlaylistDialog.value = show }
 
     // Playlist Management
-    fun createNewPlaylist(name: String, desc: String = "") {
+    fun createNewPlaylist(name: String, desc: String = "", isOffline: Boolean = false) {
         viewModelScope.launch {
-            val id = repository.createPlaylist(name, desc)
+            val id = repository.createPlaylist(name, desc, isOffline)
             _showAddToPlaylistDialog.value?.let { song ->
                 repository.addSongToPlaylist(id, song.id)
+                if (isOffline) {
+                    showMessage("Created offline playlist & downloaded \"${song.title}\"")
+                } else {
+                    showMessage("Created playlist \"$name\"")
+                }
+            } ?: run {
+                showMessage(if (isOffline) "Created empty Offline Playlist" else "Created empty Online Playlist")
             }
             _showCreatePlaylistDialog.value = false
+            _showAddToPlaylistDialog.value = null
         }
     }
 
     fun addSongToPlaylist(playlistId: String, songId: String) {
         viewModelScope.launch {
             repository.addSongToPlaylist(playlistId, songId)
+            val playlist = allPlaylists.value.find { it.id == playlistId }
+            if (playlist != null && playlist.isOffline) {
+                showMessage("Added to Offline Playlist & downloaded for offline playback")
+            } else {
+                showMessage("Added song to playlist")
+            }
             _showAddToPlaylistDialog.value = null
         }
+    }
+
+    fun removeSongFromPlaylist(playlistId: String, songId: String) {
+        viewModelScope.launch {
+            repository.removeSongFromPlaylist(playlistId, songId)
+            showMessage("Removed track from playlist")
+        }
+    }
+
+    fun moveSongBetweenPlaylists(fromPlaylistId: String, toPlaylistId: String, songId: String) {
+        viewModelScope.launch {
+            repository.moveSongBetweenPlaylists(fromPlaylistId, toPlaylistId, songId)
+            val target = allPlaylists.value.find { it.id == toPlaylistId }
+            if (target != null && target.isOffline) {
+                showMessage("Moved track & downloaded for offline playback")
+            } else {
+                showMessage("Moved track to new playlist")
+            }
+            _songToMoveBetweenPlaylists.value = null
+        }
+    }
+
+    fun showMoveSongDialog(song: Song?, fromPlaylistId: String?) {
+        _songToMoveBetweenPlaylists.value = if (song != null && fromPlaylistId != null) Pair(song, fromPlaylistId) else null
+    }
+
+    fun clearAllPlaylists() {
+        viewModelScope.launch {
+            repository.clearAllPlaylists()
+            _selectedPlaylistId.value = null
+            showMessage("All playlists deleted and reset")
+        }
+    }
+
+    fun setAutoDownloadOfflinePlaylists(enabled: Boolean) {
+        preferencesManager.setAutoDownloadOfflinePlaylists(enabled)
+    }
+
+    fun setSearchTimeoutSeconds(seconds: Int) {
+        preferencesManager.setSearchTimeoutSeconds(seconds)
     }
 
     fun deletePlaylist(playlistId: String) {
@@ -381,6 +633,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
             if (_selectedPlaylistId.value == playlistId) {
                 _selectedPlaylistId.value = null
             }
+            showMessage("Playlist deleted")
         }
     }
 
@@ -396,7 +649,7 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     // Local Scanner
     fun refreshLocalMedia() {
         viewModelScope.launch {
-            repository.scanLocalMedia()
+            repository.scanLocalMedia(filterShortAudio.value)
         }
     }
 
@@ -479,6 +732,84 @@ class MusicViewModel(application: Application) : AndroidViewModel(application) {
     fun matchSongWithCloud(song: Song) {
         val matched = repository.matchSongWithYoutube(song)
         playSong(matched)
+    }
+
+    // Feature Flags for Admin Panel
+    fun setEqualizerFeatureEnabled(enabled: Boolean) {
+        preferencesManager.setEqualizerFeatureEnabled(enabled)
+    }
+
+    fun setVolumeBoosterFeatureEnabled(enabled: Boolean) {
+        preferencesManager.setVolumeBoosterFeatureEnabled(enabled)
+    }
+
+    fun setTagEditorFeatureEnabled(enabled: Boolean) {
+        preferencesManager.setTagEditorFeatureEnabled(enabled)
+    }
+
+    fun setAudioTrimmerFeatureEnabled(enabled: Boolean) {
+        preferencesManager.setAudioTrimmerFeatureEnabled(enabled)
+    }
+
+    fun setLocalScannerFeatureEnabled(enabled: Boolean) {
+        preferencesManager.setLocalScannerFeatureEnabled(enabled)
+    }
+
+    fun setFilterShortAudio(enabled: Boolean) {
+        preferencesManager.setFilterShortAudio(enabled)
+    }
+
+    fun setWaveformVisualizerEnabled(enabled: Boolean) {
+        preferencesManager.setWaveformVisualizerEnabled(enabled)
+    }
+
+    // Admin Panel Diagnostics and Maintenance Actions
+    fun getOfflineCacheSizeBytes(): Long {
+        return repository.getOfflineCacheSizeBytes()
+    }
+
+    fun clearOfflineCache(onComplete: (Int) -> Unit = {}) {
+        viewModelScope.launch {
+            val count = repository.clearAllOfflineCache()
+            showMessage("Cleared $count offline cached tracks")
+            onComplete(count)
+        }
+    }
+
+    fun setAdaptiveQualityEnabled(enabled: Boolean) {
+        preferencesManager.setAdaptiveQualityEnabled(enabled)
+        showMessage(if (enabled) "Adaptive stream quality enabled (Auto 48k floor)" else "Manual bitrate override active")
+    }
+
+    fun simulateNetworkBandwidth(kbps: Int?) {
+        networkSpeedMonitor.simulateSpeed(kbps)
+        showMessage(if (kbps != null) "Simulating ${kbps} kbps network condition" else "Reset to live network conditions")
+    }
+
+    fun setSearchGenreRadioEnabled(enabled: Boolean) {
+        preferencesManager.setSearchGenreRadioEnabled(enabled)
+        showMessage(if (enabled) "Search Genre Radio queue mix enabled" else "Search queue mix disabled")
+    }
+
+    fun setExcludeSearchRemixes(enabled: Boolean) {
+        preferencesManager.setExcludeSearchRemixes(enabled)
+        showMessage(if (enabled) "Duplicate titles & remix filtering active" else "Remix filtering disabled")
+    }
+
+    fun resetListeningHistory() {
+        preferencesManager.resetListeningCounters()
+        showMessage("Listening history and play counts reset to 0")
+    }
+
+    fun reseedCatalog() {
+        viewModelScope.launch {
+            val profile = userProfile.value
+            repository.reseedDefaultCatalog(profile.country, profile.age)
+            _searchState.value = _searchState.value.copy(
+                searchResults = repository.getOnlineCatalog()
+            )
+            showMessage("Catalog reseeded with fresh releases and playlists")
+        }
     }
 
     override fun onCleared() {

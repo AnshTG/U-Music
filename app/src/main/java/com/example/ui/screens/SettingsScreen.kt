@@ -21,6 +21,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Block
 import androidx.compose.material.icons.filled.Check
@@ -33,6 +34,8 @@ import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.NetworkCheck
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material.icons.filled.VolumeUp
@@ -72,17 +75,16 @@ import com.example.ui.theme.AppAccent
 import com.example.ui.theme.ElectricViolet
 import com.example.ui.theme.NeonCyan
 import com.example.ui.theme.NeonPink
-
-import androidx.compose.material.icons.filled.PlayCircle
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.ScreenLockPortrait
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     currentTheme: String,
     currentAccent: String = "Violet",
     isAdBlockEnabled: Boolean,
+    isAdaptiveQualityEnabled: Boolean = true,
+    effectiveStreamingQuality: String = "High (256 kbps)",
+    detectedBandwidthKbps: Int = 2500,
+    networkTypeName: String = "Wi-Fi",
     streamingQuality: String,
     downloadQuality: String,
     crossfadeSec: Int,
@@ -93,9 +95,11 @@ fun SettingsScreen(
     ytPreferStream: Boolean = true,
     ytAutoMatch: Boolean = true,
     onBack: () -> Unit,
+    onOpenAdminPanel: () -> Unit = {},
     onThemeChange: (String) -> Unit,
     onAccentChange: (String) -> Unit = {},
     onAdBlockChange: (Boolean) -> Unit,
+    onAdaptiveQualityEnabledChange: (Boolean) -> Unit = {},
     onStreamingQualityChange: (String) -> Unit,
     onDownloadQualityChange: (String) -> Unit,
     onCrossfadeChange: (Int) -> Unit,
@@ -155,7 +159,7 @@ fun SettingsScreen(
                     Column(modifier = Modifier.padding(16.dp)) {
                         // Background Playback Engine
                         SettingsToggleRow(
-                            icon = Icons.Default.ScreenLockPortrait,
+                            icon = Icons.Default.PlayCircle,
                             title = "Background Audio Playback",
                             subtitle = "Keep music playing seamlessly when screen is locked or switching apps",
                             checked = ytBackgroundPlayback,
@@ -214,11 +218,66 @@ fun SettingsScreen(
 
                         Spacer(modifier = Modifier.height(16.dp))
 
-                        // Audio Streaming Quality
+                        // Adaptive Stream Quality Toggle
+                        SettingsToggleRow(
+                            icon = Icons.Default.NetworkCheck,
+                            title = "Adaptive Stream Quality (Auto-adjust, lowest 48k)",
+                            subtitle = "Automatically scales audio bitrate to match live connection speed. Lowest floor is 48 kbps.",
+                            checked = isAdaptiveQualityEnabled,
+                            onCheckedChange = onAdaptiveQualityEnabledChange,
+                            accentColor = ElectricViolet
+                        )
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        // Active Network Condition & Effective Bitrate Indicator
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column {
+                                    Text(
+                                        text = "Current: $effectiveStreamingQuality",
+                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
+                                        color = if (isAdaptiveQualityEnabled) NeonCyan else MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "$networkTypeName • ${detectedBandwidthKbps} kbps downstream",
+                                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(if (isAdaptiveQualityEnabled) NeonCyan.copy(alpha = 0.2f) else ElectricViolet.copy(alpha = 0.2f))
+                                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                                ) {
+                                    Text(
+                                        text = if (isAdaptiveQualityEnabled) "AUTO" else "MANUAL",
+                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                        color = if (isAdaptiveQualityEnabled) NeonCyan else ElectricViolet
+                                    )
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(14.dp))
+
+                        // Audio Streaming Quality / Manual Override
                         SettingsClickableRow(
                             icon = Icons.Default.HighQuality,
-                            title = "Streaming Audio Quality",
-                            value = streamingQuality,
+                            title = "Manual Bitrate Override",
+                            value = if (isAdaptiveQualityEnabled) "Auto ($effectiveStreamingQuality)" else "$streamingQuality (Locked)",
                             onClick = { showQualityDialog = true }
                         )
 
@@ -361,6 +420,82 @@ fun SettingsScreen(
                 }
             }
 
+            // Admin & System Console Section
+            item {
+                SettingsCategoryHeader("ADMINISTRATION & SYSTEM CONSOLE")
+            }
+
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .clickable { onOpenAdminPanel() }
+                        .testTag("settings_open_admin_card"),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(46.dp)
+                                    .clip(CircleShape)
+                                    .background(NeonCyan.copy(alpha = 0.2f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.AdminPanelSettings,
+                                    contentDescription = "Admin Panel",
+                                    tint = NeonCyan,
+                                    modifier = Modifier.size(26.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(14.dp))
+                            Column {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        text = "Admin & Feature Controls",
+                                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(4.dp))
+                                            .background(NeonCyan.copy(alpha = 0.2f))
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    ) {
+                                        Text(
+                                            text = "CONSOLE",
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontSize = 9.sp,
+                                                fontWeight = FontWeight.Black
+                                            ),
+                                            color = NeonCyan
+                                        )
+                                    }
+                                }
+                                Text(
+                                    text = "Manage feature flags, purge cache & diagnostics",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             // Developer & Attribution Section
             item {
                 SettingsCategoryHeader("DEVELOPER & CREDITS")
@@ -470,25 +605,52 @@ fun SettingsScreen(
 
     // Quality Dialog
     if (showQualityDialog) {
+        val qualityOptions = listOf(
+            "Auto (Adaptive 48k-320k)" to "Automatically adjusts to network condition (48k min)",
+            "Ultra (320 kbps)" to "Studio Master Quality (Best on Wi-Fi)",
+            "High (256 kbps)" to "High Definition Audio",
+            "Medium (128 kbps)" to "Balanced Quality (3G/Cellular)",
+            "Low (48 kbps)" to "Lowest Floor / Weak 2G & Data Saver"
+        )
         AlertDialog(
             onDismissRequest = { showQualityDialog = false },
             title = { Text("Select Streaming Quality") },
             text = {
-                Column {
-                    listOf("High (320 kbps)", "Normal (160 kbps)", "Low (96 kbps)", "Auto").forEach { q ->
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    qualityOptions.forEach { (option, desc) ->
+                        val isSelected = if (option.startsWith("Auto")) isAdaptiveQualityEnabled else (!isAdaptiveQualityEnabled && streamingQuality == option)
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
                                 .clickable {
-                                    onStreamingQualityChange(q)
+                                    if (option.startsWith("Auto")) {
+                                        onAdaptiveQualityEnabledChange(true)
+                                    } else {
+                                        onAdaptiveQualityEnabledChange(false)
+                                        onStreamingQualityChange(option)
+                                    }
                                     showQualityDialog = false
                                 }
-                                .padding(vertical = 10.dp),
+                                .padding(horizontal = 8.dp, vertical = 10.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text(q, style = MaterialTheme.typography.bodyLarge)
-                            if (streamingQuality == q) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = option,
+                                    style = MaterialTheme.typography.bodyLarge.copy(
+                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                    ),
+                                    color = if (isSelected) ElectricViolet else MaterialTheme.colorScheme.onSurface
+                                )
+                                Text(
+                                    text = desc,
+                                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (isSelected) {
                                 Icon(Icons.Default.Check, contentDescription = null, tint = ElectricViolet)
                             }
                         }

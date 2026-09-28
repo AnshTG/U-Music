@@ -48,4 +48,10 @@ interface SongDao {
 
     @Query("DELETE FROM songs WHERE id = :id")
     suspend fun deleteSongById(id: String)
+
+    @Query("SELECT * FROM songs WHERE isDownloaded = 1")
+    suspend fun getDownloadedSongsList(): List<Song>
+
+    @Query("UPDATE songs SET isDownloaded = 0, localFilePath = ''")
+    suspend fun clearAllDownloaded()
 }

@@ -4,6 +4,8 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -166,11 +168,18 @@ fun FullScreenPlayer(
                         style = MaterialTheme.typography.labelSmall.copy(letterSpacing = 1.5.sp),
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Text(
-                        text = song.genre,
-                        style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
-                        color = MaterialTheme.colorScheme.primary
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = song.genre,
+                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = " • ${playbackState.activeStreamingQuality}",
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 11.sp),
+                            color = NeonCyan
+                        )
+                    }
                 }
 
                 Box {
@@ -187,7 +196,7 @@ fun FullScreenPlayer(
                         onDismissRequest = { showMoreMenu = false }
                     ) {
                         DropdownMenuItem(
-                            text = { Text("Stream Source: ${song.youtubeAudioBitrate}") },
+                            text = { Text("Stream Quality: ${playbackState.activeStreamingQuality}") },
                             onClick = { showMoreMenu = false },
                             leadingIcon = { Icon(Icons.Default.GraphicEq, null, tint = NeonCyan) }
                         )
@@ -324,11 +333,12 @@ private fun PlayerMainContent(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 24.dp),
+            .padding(horizontal = 24.dp)
+            .verticalScroll(rememberScrollState()),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceBetween
+        verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(4.dp))
 
         // Large Album Art with Glow
         Box(

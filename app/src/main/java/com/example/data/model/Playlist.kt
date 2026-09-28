@@ -10,6 +10,7 @@ data class Playlist(
     val description: String = "",
     val coverUrl: String = "",
     val isCustom: Boolean = true,
+    val isOffline: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val songCount: Int = 0
 )

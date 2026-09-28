@@ -257,7 +257,7 @@ fun SearchScreen(
             // Search Results List
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(bottom = 120.dp)
+                contentPadding = PaddingValues(bottom = 24.dp)
             ) {
                 items(searchState.searchResults) { song ->
                     val isCurrent = song.id == playbackState.currentSong?.id

@@ -46,7 +46,8 @@ data class PlaybackUiState(
     val abRepeatB: Long? = null,
     val isLoading: Boolean = false,
     val isMusicVideoMode: Boolean = false,
-    val isCloudStreamActive: Boolean = true
+    val isCloudStreamActive: Boolean = true,
+    val activeStreamingQuality: String = "High (256 kbps)"
 )
 
 class MusicPlayerController(private val context: Context) {
@@ -57,6 +58,11 @@ class MusicPlayerController(private val context: Context) {
     private var virtualizer: Virtualizer? = null
 
     var onPlaybackStateChanged: ((Song?, Boolean) -> Unit)? = null
+    var activeStreamingQuality: String = "High (256 kbps)"
+        set(value) {
+            field = value
+            _uiState.value = _uiState.value.copy(activeStreamingQuality = value)
+        }
 
     private val _uiState = MutableStateFlow(PlaybackUiState())
     val uiState: StateFlow<PlaybackUiState> = _uiState.asStateFlow()
@@ -181,7 +187,7 @@ class MusicPlayerController(private val context: Context) {
         prepareJob = scope.launch {
             try {
                 val resolvedAudioUrl = if (song.isOnline && !song.isDownloaded) {
-                    AudioStreamExtractor.resolveStreamAudioUrl(song)
+                    AudioStreamExtractor.resolveStreamAudioUrl(song, activeStreamingQuality)
                 } else {
                     song.audioUrl
                 }

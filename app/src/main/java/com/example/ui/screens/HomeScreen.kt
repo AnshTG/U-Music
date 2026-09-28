@@ -91,15 +91,14 @@ fun HomeScreen(
     var selectedFilter by remember { mutableStateOf("Made For You") }
     val moodChips = listOf("Made For You", "Top Hits", "Bollywood", "Energize", "Relax", "Lo-Fi Beats")
 
-    // Filter or re-order songs dynamically according to user activity / selected filter
-    val displaySongs = remember(selectedFilter, allSongs, userProfile) {
+    // Filter or re-order songs according to selected filter, keeping order stable during playback
+    val displaySongs = remember(selectedFilter, allSongs) {
         when (selectedFilter) {
             "Made For You" -> {
-                // Prioritize user's top genre or most played artist
+                // Personalised: prioritise liked songs and user's favourite genre from profile, keeping consistent order
                 allSongs.sortedWith(
                     compareByDescending<Song> { it.isLiked }
                         .thenByDescending { it.genre.equals(userProfile.topGenre, ignoreCase = true) }
-                        .thenByDescending { it.artist.contains(userProfile.topArtist, ignoreCase = true) }
                 )
             }
             "Bollywood" -> allSongs.filter { it.genre.contains("Bollywood", ignoreCase = true) || it.genre.contains("Filmi", ignoreCase = true) || it.title.contains("Kesariya", ignoreCase = true) }
@@ -114,7 +113,7 @@ fun HomeScreen(
         modifier = modifier
             .fillMaxSize()
             .testTag("home_screen"),
-        contentPadding = PaddingValues(bottom = 120.dp)
+        contentPadding = PaddingValues(bottom = 24.dp)
     ) {
         // Clean Header
         item {
@@ -315,21 +314,23 @@ fun HomeScreen(
             }
         }
 
-        // Featured Curated Mixes
-        item {
-            SectionHeader(
-                title = "Curated Mixes & Charts",
-                subtitle = "Studio collections for you"
-            )
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                items(playlists) { playlist ->
-                    PlaylistCard(
-                        playlist = playlist,
-                        onClick = { onPlaylistClick(playlist) }
-                    )
+        // Featured Curated Mixes (Shown if playlists exist)
+        if (playlists.isNotEmpty()) {
+            item {
+                SectionHeader(
+                    title = "Your Playlists & Mixes",
+                    subtitle = "Studio collections for you"
+                )
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    items(playlists) { playlist ->
+                        PlaylistCard(
+                            playlist = playlist,
+                            onClick = { onPlaylistClick(playlist) }
+                        )
+                    }
                 }
             }
         }
@@ -342,7 +343,47 @@ fun HomeScreen(
             )
         }
 
-        items(displaySongs) { song ->
+        if (displaySongs.isEmpty()) {
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 32.dp, vertical = 48.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.size(56.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.MusicNote,
+                                    contentDescription = null,
+                                    tint = NeonCyan,
+                                    modifier = Modifier.size(28.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(14.dp))
+                        Text(
+                            text = "Loading music feed...",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "Curating authentic high-definition tracks for you",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+
+        items(displaySongs, key = { it.id }) { song ->
             val isCurrent = song.id == playbackState.currentSong?.id
             SongItemRow(
                 song = song,

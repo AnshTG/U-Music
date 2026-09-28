@@ -33,4 +33,16 @@ interface PlaylistDao {
         ORDER BY ps.orderIndex ASC
     """)
     fun getSongsForPlaylist(playlistId: String): Flow<List<Song>>
+
+    @Query("SELECT * FROM playlists WHERE id = :id LIMIT 1")
+    suspend fun getPlaylistById(id: String): Playlist?
+
+    @Query("UPDATE playlists SET songCount = (SELECT COUNT(*) FROM playlist_songs WHERE playlistId = :playlistId) WHERE id = :playlistId")
+    suspend fun updatePlaylistSongCount(playlistId: String)
+
+    @Query("DELETE FROM playlists")
+    suspend fun clearAllPlaylists()
+
+    @Query("DELETE FROM playlist_songs")
+    suspend fun clearAllPlaylistSongs()
 }

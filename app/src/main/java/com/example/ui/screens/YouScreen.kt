@@ -22,6 +22,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.DownloadDone
+import androidx.compose.material.icons.filled.AdminPanelSettings
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Headphones
@@ -34,6 +35,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -71,15 +73,16 @@ fun YouScreen(
     onSongMore: (Song) -> Unit,
     onOpenSettings: () -> Unit,
     onEditProfile: () -> Unit,
+    onOpenAdminPanel: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
             .testTag("you_screen"),
-        contentPadding = PaddingValues(bottom = 120.dp)
+        contentPadding = PaddingValues(bottom = 24.dp)
     ) {
-        // Top Header: "You" + Settings button
+        // Top Header: "You" + Admin & Settings buttons
         item {
             Row(
                 modifier = Modifier
@@ -97,18 +100,37 @@ fun YouScreen(
                     color = MaterialTheme.colorScheme.onBackground
                 )
 
-                IconButton(
-                    onClick = onOpenSettings,
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Settings,
-                        contentDescription = "Settings",
-                        tint = MaterialTheme.colorScheme.onSurface
-                    )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = onOpenAdminPanel,
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .testTag("you_admin_panel_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.AdminPanelSettings,
+                            contentDescription = "Admin Panel",
+                            tint = NeonCyan
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    IconButton(
+                        onClick = onOpenSettings,
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Settings",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
                 }
             }
         }
@@ -312,7 +334,7 @@ fun YouScreen(
                     }
                 }
 
-                // In-App Offline Cache Card
+                // Downloaded Songs Card
                 Card(
                     modifier = Modifier
                         .weight(1f)
@@ -331,18 +353,18 @@ fun YouScreen(
                         Column {
                             Icon(
                                 imageVector = Icons.Default.DownloadDone,
-                                contentDescription = "Offline Cache",
+                                contentDescription = "Downloaded Songs",
                                 tint = Color.White,
                                 modifier = Modifier.size(26.dp)
                             )
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = "Offline Cache",
+                                text = "Downloaded Songs",
                                 style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
                                 color = Color.White
                             )
                             Text(
-                                text = "${downloadedSongs.size} cached tracks",
+                                text = "${downloadedSongs.size} tracks saved",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color.White.copy(alpha = 0.8f)
                             )
@@ -386,12 +408,51 @@ fun YouScreen(
                 }
             }
 
-            LazyRow(
-                contentPadding = PaddingValues(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                items(playlists) { playlist ->
-                    PlaylistCard(playlist = playlist, onClick = { onPlaylistClick(playlist) })
+            if (playlists.isEmpty()) {
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .clickable { onCreatePlaylistClick() }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Create Your First Playlist",
+                                style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = "Create Online or Offline playlists to organize your songs",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            } else {
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                ) {
+                    items(playlists) { playlist ->
+                        PlaylistCard(playlist = playlist, onClick = { onPlaylistClick(playlist) })
+                    }
                 }
             }
         }

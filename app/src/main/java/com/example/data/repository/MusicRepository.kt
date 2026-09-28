@@ -11,6 +11,9 @@ import com.example.data.model.PlaylistSongCrossRef
 import com.example.data.model.Song
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileOutputStream
@@ -29,73 +32,42 @@ class MusicRepository(
     val localDeviceSongs: Flow<List<Song>> = songDao.getLocalSongs()
     val allPlaylists: Flow<List<Playlist>> = playlistDao.getAllPlaylists()
 
-    // Dynamic Online Trending Catalog
-    private var dynamicOnlineCatalog = mutableListOf<Song>()
+    // Dynamic Online Trending Catalog StateFlow
+    private val _onlineCatalogFlow = MutableStateFlow<List<Song>>(
+        (AudioStreamExtractor.getIndianTrendingHits() + AudioStreamExtractor.getGlobalTrendingHits()).distinctBy { it.id }
+    )
+    val onlineCatalogFlow: StateFlow<List<Song>> = _onlineCatalogFlow.asStateFlow()
 
     suspend fun initializeCatalog(country: String = "India", age: Int = 22) = withContext(Dispatchers.IO) {
-        // Fetch real regional suggestions based on Country
+        // Fetch diverse initial songs from regional & global hit lists
         val regionalSongs = if (country.equals("India", ignoreCase = true)) {
-            AudioStreamExtractor.getIndianTrendingHits()
+            AudioStreamExtractor.getIndianTrendingHits() + AudioStreamExtractor.getGlobalTrendingHits()
         } else {
-            AudioStreamExtractor.getGlobalTrendingHits()
+            AudioStreamExtractor.getGlobalTrendingHits() + AudioStreamExtractor.getIndianTrendingHits()
         }
 
-        dynamicOnlineCatalog.clear()
-        dynamicOnlineCatalog.addAll(regionalSongs)
+        val uniqueSongs = regionalSongs.distinctBy { it.id }
+        _onlineCatalogFlow.value = uniqueSongs
 
         // Insert into Room
-        dynamicOnlineCatalog.forEach { song ->
+        uniqueSongs.forEach { song ->
             songDao.insertSong(song)
         }
 
-        // Insert default playlists
-        val defaultPlaylists = listOf(
-            Playlist(
-                id = "pl_trending",
-                title = if (country.equals("India", ignoreCase = true)) "India Top 50 Chart" else "Today's Top Hits",
-                description = "Top trending tracks streaming directly in background without interruption.",
-                coverUrl = "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80",
-                isCustom = false,
-                songCount = dynamicOnlineCatalog.size
-            ),
-            Playlist(
-                id = "pl_chill",
-                title = "Late Night Chill & Lo-Fi",
-                description = "Mellow beats and soothing melodies for unwinding.",
-                coverUrl = "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=600&auto=format&fit=crop&q=80",
-                isCustom = false,
-                songCount = 4
-            ),
-            Playlist(
-                id = "pl_workout",
-                title = "High Energy Cardio",
-                description = "Pump up the volume with electrifying beats.",
-                coverUrl = "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop&q=80",
-                isCustom = false,
-                songCount = 5
-            )
-        )
-
-        defaultPlaylists.forEach { playlist ->
-            playlistDao.insertPlaylist(playlist)
-        }
-
-        dynamicOnlineCatalog.forEachIndexed { index, song ->
-            playlistDao.insertSongToPlaylist(PlaylistSongCrossRef("pl_trending", song.id, index))
-        }
+        // No pre-made playlists seeded - new users start with empty playlists
     }
 
     suspend fun refreshCatalogForRegion(country: String, age: Int) = withContext(Dispatchers.IO) {
         val songs = AudioStreamExtractor.fetchTrendingForCountry(country, age)
         if (songs.isNotEmpty()) {
-            dynamicOnlineCatalog.clear()
-            dynamicOnlineCatalog.addAll(songs)
+            val combined = (songs + _onlineCatalogFlow.value).distinctBy { it.id }
+            _onlineCatalogFlow.value = combined
             songs.forEach { songDao.insertSong(it) }
         }
     }
 
     fun getOnlineCatalog(): List<Song> {
-        return if (dynamicOnlineCatalog.isNotEmpty()) dynamicOnlineCatalog else AudioStreamExtractor.getIndianTrendingHits()
+        return _onlineCatalogFlow.value
     }
 
     fun searchSongs(query: String, filter: String = "All"): List<Song> {
@@ -219,14 +191,23 @@ class MusicRepository(
         removeDownload(song.id)
     }
 
-    suspend fun createPlaylist(name: String, description: String = ""): String = withContext(Dispatchers.IO) {
-        val id = "custom_pl_${System.currentTimeMillis()}"
+    suspend fun clearAllDownloads() = withContext(Dispatchers.IO) {
+        val offlineCacheDir = File(context.cacheDir, "offline_stream_cache")
+        if (offlineCacheDir.exists()) {
+            offlineCacheDir.listFiles()?.forEach { it.delete() }
+        }
+        songDao.clearAllDownloaded()
+    }
+
+    suspend fun createPlaylist(name: String, description: String = "", isOffline: Boolean = false): String = withContext(Dispatchers.IO) {
+        val id = "pl_${System.currentTimeMillis()}"
         val playlist = Playlist(
             id = id,
             title = name,
             description = description,
-            coverUrl = "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop&q=80",
+            coverUrl = "",
             isCustom = true,
+            isOffline = isOffline,
             songCount = 0
         )
         playlistDao.insertPlaylist(playlist)
@@ -235,10 +216,44 @@ class MusicRepository(
 
     suspend fun addSongToPlaylist(playlistId: String, songId: String) = withContext(Dispatchers.IO) {
         playlistDao.insertSongToPlaylist(PlaylistSongCrossRef(playlistId, songId, 0))
+        playlistDao.updatePlaylistSongCount(playlistId)
+        val playlist = playlistDao.getPlaylistById(playlistId)
+        if (playlist != null && playlist.isOffline) {
+            val song = songDao.getSongById(songId)
+            if (song != null && !song.isDownloaded) {
+                downloadSong(song)
+            }
+        }
     }
 
     suspend fun removeSongFromPlaylist(playlistId: String, songId: String) = withContext(Dispatchers.IO) {
         playlistDao.removeSongFromPlaylist(playlistId, songId)
+        playlistDao.updatePlaylistSongCount(playlistId)
+    }
+
+    suspend fun moveSongBetweenPlaylists(fromPlaylistId: String, toPlaylistId: String, songId: String) = withContext(Dispatchers.IO) {
+        playlistDao.removeSongFromPlaylist(fromPlaylistId, songId)
+        playlistDao.updatePlaylistSongCount(fromPlaylistId)
+
+        playlistDao.insertSongToPlaylist(PlaylistSongCrossRef(toPlaylistId, songId, 0))
+        playlistDao.updatePlaylistSongCount(toPlaylistId)
+
+        val targetPlaylist = playlistDao.getPlaylistById(toPlaylistId)
+        if (targetPlaylist != null && targetPlaylist.isOffline) {
+            val song = songDao.getSongById(songId)
+            if (song != null && !song.isDownloaded) {
+                downloadSong(song)
+            }
+        }
+    }
+
+    fun getSongsForPlaylist(playlistId: String): Flow<List<Song>> {
+        return playlistDao.getSongsForPlaylist(playlistId)
+    }
+
+    suspend fun clearAllPlaylists() = withContext(Dispatchers.IO) {
+        playlistDao.clearAllPlaylistSongs()
+        playlistDao.clearAllPlaylists()
     }
 
     suspend fun deletePlaylist(playlistId: String) = withContext(Dispatchers.IO) {
@@ -256,7 +271,7 @@ class MusicRepository(
         songDao.updateMetadata(songId, newTitle, newArtist, newAlbum, newGenre, newYear)
     }
 
-    suspend fun scanLocalMedia() = withContext(Dispatchers.IO) {
+    suspend fun scanLocalMedia(filterShort: Boolean = true) = withContext(Dispatchers.IO) {
         try {
             val projection = arrayOf(
                 MediaStore.Audio.Media._ID,
@@ -268,7 +283,8 @@ class MusicRepository(
                 MediaStore.Audio.Media.DATA
             )
 
-            val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0 AND ${MediaStore.Audio.Media.DURATION} > 10000"
+            val minDuration = if (filterShort) 30000L else 5000L
+            val selection = "${MediaStore.Audio.Media.IS_MUSIC} != 0 AND ${MediaStore.Audio.Media.DURATION} > $minDuration"
             val sortOrder = "${MediaStore.Audio.Media.TITLE} ASC"
 
             val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -322,5 +338,27 @@ class MusicRepository(
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+
+    fun getOfflineCacheSizeBytes(): Long {
+        val cacheDir = File(context.cacheDir, "offline_stream_cache")
+        if (!cacheDir.exists()) return 0L
+        return cacheDir.walkTopDown().filter { it.isFile }.map { it.length() }.sum()
+    }
+
+    suspend fun clearAllOfflineCache(): Int = withContext(Dispatchers.IO) {
+        val cacheDir = File(context.cacheDir, "offline_stream_cache")
+        var count = 0
+        if (cacheDir.exists()) {
+            cacheDir.listFiles()?.forEach { file ->
+                if (file.isFile && file.delete()) count++
+            }
+        }
+        songDao.clearAllDownloaded()
+        count
+    }
+
+    suspend fun reseedDefaultCatalog(country: String = "India", age: Int = 22) = withContext(Dispatchers.IO) {
+        initializeCatalog(country, age)
     }
 }
